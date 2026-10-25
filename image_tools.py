@@ -87,6 +87,8 @@ TOOL_DESCRIPTION = (
     "只有用户原话完全没有描述画面内容（例如只发了图片、或只说「再来一张」）时，"
     "才可以结合上下文做最小补全，并保持简短。"
     "返回保存后的本地图片路径，默认同时把图片发给用户。"
+    "生成参数默认尺寸 1024x1024、画质 auto；用户明确要求改尺寸 / 画质 / "
+    "张数 / 背景 / 输出格式 / 模型时，直接传入对应字段即可，无需让用户改插件配置。"
 )
 
 _TOOL_PARAMETERS: dict[str, Any] = {
@@ -109,11 +111,19 @@ _TOOL_PARAMETERS: dict[str, Any] = {
         },
         "size": {
             "type": "string",
-            "description": "图片尺寸，如 1024x1024 / 1536x1024 / 1024x1536 / auto，留空用插件默认值",
+            "description": (
+                "图片尺寸，默认 1024x1024。可选 1536x1024 / 1024x1536 / auto，"
+                "或自定义 宽x高（如 1280x720，两边为 16 的倍数、宽高比 1:3~3:1、"
+                "最长边不超过 3840）；留空用插件默认值"
+            ),
         },
         "quality": {
             "type": "string",
-            "description": "画质，如 low / medium / high / xhigh / max / auto，留空用插件默认值",
+            "enum": ["auto", "low", "medium", "high", "xhigh", "max"],
+            "description": (
+                "画质，默认 auto（不指定时即 auto）：low / medium / high / "
+                "xhigh / max（xhigh、max 仅部分模型支持）；留空用插件默认值"
+            ),
         },
         "background": {
             "type": "string",

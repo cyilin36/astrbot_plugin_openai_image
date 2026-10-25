@@ -24,13 +24,14 @@
     "description": "默认图片尺寸",
     "type": "string",
     "default": "1024x1024",
-    "hint": "常用 1024x1024、1536x1024、1024x1536，或 auto。部分模型支持自定义尺寸（如 1280x720），需为 16 的倍数且长宽比在 1:3 到 3:1 之间。"
+    "hint": "常用 1024x1024、1536x1024、1024x1536，或 auto。部分模型支持自定义尺寸（如 1280x720），需为 16 的倍数且长宽比在 1:3 到 3:1 之间。指令和 LLM 工具都可用 size 参数临时覆盖。"
   },
   "default_quality": {
     "description": "默认画质",
     "type": "string",
-    "default": "",
-    "hint": "留空表示使用服务端默认（通常为 auto）。可选 low、medium、high、auto，部分模型支持 xhigh、max。"
+    "default": "auto",
+    "options": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "hint": "默认 auto（由模型自行决定）；xhigh、max 仅部分模型支持。指令和 LLM 工具都可用 quality 参数临时覆盖。"
   },
   "output_format": {
     "description": "输出图片格式",

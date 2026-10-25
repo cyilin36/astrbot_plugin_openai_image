@@ -4,8 +4,8 @@ AstrBot 生图插件：调用 OpenAI 兼容的 Image API 生成与编辑图片�
 
 ## 功能
 
-- `/draw <提示词>` 文生图（别名 `/生图`）
-- `/draw edit <提示词>` 图生图编辑，图片随消息一起发出
+- `/draw [参数] <提示词>` 文生图（别名 `/生图`）
+- `/draw edit [参数] <提示词>` 图生图编辑，图片随消息一起发出
 - `/draw help` 查看用法
 - LLM 工具 `openai_image`：`action=generate` / `action=edit`，由大模型自动调用，结果直接发到当前会话
 
@@ -24,8 +24,8 @@ AstrBot 生图插件：调用 OpenAI 兼容的 Image API 生成与编辑图片�
 | `model` | **必填**，你的服务商实际支持的模型名（如 `gpt-image-2.5-flare`、`gpt-image-2`、`gpt-image-1`、`dall-e-3`） |
 | `authorized_uids` | 允许使用的 AstrBot UID 列表，为空时拒绝所有生图请求 |
 | `allow_admin` | 是否允许管理员绕过 UID 白名单，默认开启 |
-| `default_size` | 默认尺寸，如 `1024x1024`、`1536x1024`、`1024x1536`、`auto`，也支持 `宽x高` 自定义 |
-| `default_quality` | 默认画质：`low` / `medium` / `high` / `auto`，部分模型支持 `xhigh` / `max` |
+| `default_size` | 默认尺寸，默认 `1024x1024`，也可填 `1536x1024`、`1024x1536`、`auto` 或 `宽x高` 自定义 |
+| `default_quality` | 默认画质，默认 `auto`：`low` / `medium` / `high` / `auto`，部分模型支持 `xhigh` / `max` |
 | `output_format` | 输出格式：`png` / `jpeg` / `webp` |
 | `background` | 背景：`auto` / `transparent` / `opaque`（透明背景仅支持 png / webp） |
 | `moderation` | 内容审核级别：`auto` / `low` |
@@ -43,14 +43,18 @@ AstrBot 生图插件：调用 OpenAI 兼容的 Image API 生成与编辑图片�
 
 ```
 /draw 一只戴墨镜的橘猫
+/draw --size 1536x1024 --quality high 一只戴墨镜的橘猫
 /draw edit 把背景换成星空        # 需要把图片和这条消息一起发出
 /draw help
-/生图 一只戴墨镜的橘猫            # 别名
+/生图 -s 1024x1536 -q high 星空下的海边小屋   # 别名，用法相同
 ```
 
-`/draw` 之后的整段文本都会被当作提示词（支持空格），只有首个词是 `edit` / `改图` 时进入编辑分支，`help` / `帮助` 显示说明。
+参数写在提示词前面，支持 `--size` / `-s`、`--quality` / `-q`、`--n`、`--background`、`--format`、`--model`，也可以写成 `size=...` 形式：
 
-尺寸、画质等参数不在指令里传，由插件配置决定；通过 LLM 工具调用时，模型可以按需指定这些字段。
+- `size`：默认 `1024x1024`，可用 `1536x1024`、`1024x1536`、`auto` 或自定义 `宽x高`（两边为 16 的倍数、宽高比 1:3~3:1、最长边不超过 3840）。
+- `quality`：默认 `auto`，可用 `low` / `medium` / `high`，部分模型支持 `xhigh` / `max`。
+
+参数只从提示词之前解析，遇到第一个非参数词即停止，所以提示词中间出现的 `xxx=yyy` 仍原样保留。未指定的参数使用上面的插件配置；LLM 工具 `openai_image` 同样支持这些字段。
 
 获取自己的 UID：在聊天中发送 `/sid`，把返回的 UID 填进 `authorized_uids`。
 

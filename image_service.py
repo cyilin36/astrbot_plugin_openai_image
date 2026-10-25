@@ -78,13 +78,24 @@ HELP_TEXT = """\
 - LLM 工具调用：模型可自动调用 openai_image 工具完成文生图 / 图生图，
   action=generate 或 action=edit，编辑时图片取自当前消息，无需也无法传图片字节。
 
-注意：指令只识别「提示词」和 edit / help 关键词，不解析命令行参数。
-例如 /draw 一只猫 size=1536x1024 会把整串文字都当作提示词发给模型。
+可用参数（写在提示词前面；指令与 LLM 工具都支持）：
+  --size / --尺寸       默认 1024x1024；可选 1536x1024、1024x1536、auto，
+                        或自定义 宽x高（如 1280x720，两边为 16 的倍数、
+                        宽高比 1:3~3:1、最长边不超过 3840）
+  --quality / --画质    默认 auto；可选 low、medium、high、xhigh、max
+  --n / --张数          生成张数，默认 default_n，上限 max_n
+  --background / --背景  auto、transparent、opaque（transparent 仅支持 png / webp）
+  --format / --格式     png（默认）、jpeg、webp
+  --model / --模型      临时覆盖插件配置里的模型名
 
-如需指定尺寸 / 画质 / 张数 / 背景 / 输出格式，请用以下任一方式：
-- 修改插件配置：default_size、default_quality、default_n、background、output_format
-- 由 LLM 调用 openai_image 工具时传入对应字段：
-  size、quality、n、background、output_format
+示例：
+  /draw --size 1536x1024 --quality high 一只戴墨镜的橘猫
+  /draw -s 1024x1536 -q high 星空下的海边小屋
+  /draw edit --size auto 把背景换成夜晚
+
+参数也可以写成 size=1536x1024 的形式，但必须放在提示词之前；
+提示词中间出现的 xxx=yyy 不会被当作参数。参数缺省时使用插件配置：
+default_size、default_quality、default_n、background、output_format。
 """
 
 
@@ -356,10 +367,10 @@ class ImageService:
             self._resolve(size, "default_size", default="1024x1024")
         )
 
-        resolved_quality = self._resolve(quality, "default_quality", default="")
+        resolved_quality = self._resolve(quality, "default_quality", default="auto")
         if resolved_quality not in QUALITY_WHITELIST:
             raise ImageValidationError(
-                f"quality {resolved_quality!r} 不受支持，可用：low / medium / high / xhigh / max / auto"
+                f"quality {resolved_quality!r} 不受支持，可用：auto / low / medium / high / xhigh / max"
             )
 
         resolved_background = self._resolve(background, "background", default="")
