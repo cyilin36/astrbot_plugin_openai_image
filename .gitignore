@@ -1,0 +1,9 @@
+# 工作区临时物料：测试代码、参考代码、临时数据，永不入库
+scratch/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ruff_cache/
+.local/
