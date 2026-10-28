@@ -4,6 +4,11 @@ LLM 通过本工具调用 ImageService 完成文生图 / 图生图：
 - action=generate：文生图
 - action=edit：图生图编辑，源图片取自当前消息，LLM 不需要也无法传图片字节
 
+本工具声明为 AstrBot 后台任务（``is_background_task=True``）：框架会立即返回
+task_id 并释放会话锁，生图在后台执行，完成后自动把图片发到当前会话，再由
+AstrBot 唤醒一次主 agent 收尾。旧版本 AstrBot（<4.14）不识别该字段，会退化为
+同步调用，功能不受影响。
+
 设计红线：call() 永不向 LLM 抛异常；返回的 JSON 文本绝不包含 api_key。
 """
 
@@ -79,6 +84,9 @@ TOOL_NAME = "openai_image"
 
 TOOL_DESCRIPTION = (
     "调用 OpenAI 兼容生图服务生成或编辑图片。"
+    "本工具是后台任务：调用后立即返回 task_id，默认在生成完成后自动把图片发到当前会话。"
+    "你不需要等待结果，只需简短告诉用户正在生成；不要重复发送图片，"
+    "也不要声称图片已经生成完毕。"
     "action=generate 为文生图，仅需 prompt；"
     "action=edit 为图生图编辑，待编辑的图片取自当前用户消息里附带的图片，"
     "你无需也无法传递图片字节，此时应提示用户把图片随消息一起发出。"
@@ -86,7 +94,6 @@ TOOL_DESCRIPTION = (
     "不删减、不改写、不扩写、不润色、不补风格词、不翻译成英文；"
     "只有用户原话完全没有描述画面内容（例如只发了图片、或只说「再来一张」）时，"
     "才可以结合上下文做最小补全，并保持简短。"
-    "返回保存后的本地图片路径，默认同时把图片发给用户。"
     "生成参数默认尺寸 1024x1024、画质 auto；用户明确要求改尺寸 / 画质 / "
     "张数 / 背景 / 输出格式 / 模型时，直接传入对应字段即可，无需让用户改插件配置。"
 )
@@ -145,7 +152,7 @@ _TOOL_PARAMETERS: dict[str, Any] = {
         "send_to_user": {
             "type": "boolean",
             "default": True,
-            "description": "是否直接把生成结果发到当前会话，默认 true",
+            "description": "生成完成后是否自动把图片发到当前会话，默认 true；设为 false 时只返回本地路径",
         },
     },
     "required": ["action", "prompt"],
@@ -165,6 +172,9 @@ class OpenAIImageTool(FunctionTool):  # type: ignore[misc]
     name: str = TOOL_NAME
     description: str = TOOL_DESCRIPTION
     parameters: dict = _PARAMETERS_FIELD
+    # AstrBot >= 4.14 的后台任务标记：框架立即返回 task_id，生图在会话锁外执行。
+    # 旧版本不认识该字段，会忽略它并退化为同步调用。
+    is_background_task: bool = True
 
     async def call(self, context: Any, **kwargs: Any) -> ToolExecResult:
         action = str(kwargs.get("action") or "").strip().lower()
@@ -233,8 +243,19 @@ class OpenAIImageTool(FunctionTool):  # type: ignore[misc]
         if send_to_user:
             sent = await self._send(event, paths)
             payload["sent_to_user"] = sent
-            if not sent:
+            if sent:
+                payload["note"] = "图片已直接发送到当前会话，无需再次发送。"
+            else:
                 payload["warning"] = "图片已生成但发送失败，可查看插件日志"
+                payload["note"] = (
+                    "图片已生成但直接发送失败；如需重试，可用 send_message_to_user "
+                    "并传入 paths 里的本地路径。"
+                )
+        else:
+            payload["note"] = (
+                "图片已生成但未发送；如需发给用户，可用 send_message_to_user "
+                "并传入 paths 里的本地路径。"
+            )
 
         return _dumps(payload)
 
