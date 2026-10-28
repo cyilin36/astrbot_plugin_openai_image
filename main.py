@@ -39,10 +39,12 @@ except ImportError:  # pragma: no cover - AstrBot 直接加载 main.py 时的兜
 try:
     from .image_errors import ImageError, ImageValidationError
     from .image_service import ImageService
+    from .image_tasks import ImageTaskRegistry
     from .image_tools import OpenAIImageTool
 except ImportError:  # AstrBot 安装方式可能直接加载 main.py
     from image_errors import ImageError, ImageValidationError
     from image_service import ImageService
+    from image_tasks import ImageTaskRegistry
     from image_tools import OpenAIImageTool
 
 # 帮助关键词（大小写不敏感）。
@@ -52,6 +54,17 @@ _EDIT_TOKENS = {"edit", "改图"}
 _EDIT_USAGE = "用法：/draw edit [参数] <提示词>，并随消息附上一张图片。"
 # 非预期异常统一文案：绝不回显异常内容，避免泄露 api_key / 内部细节。
 _UNEXPECTED_ERROR = "生图失败，请检查 AstrBot 日志与插件配置。"
+
+# 注入到系统提示的一条使用约束：模型调用生图工具的那一轮不要说话。
+# 工具本身是后台任务（提交后本轮结束、图片自动发送），模型再多说一句
+# 「正在生成」就是纯噪音，而同一轮里模型主动写出的文字无法由工具侧拦截，
+# 因此这里从提示词层面先约好。
+_TOOL_SYSTEM_NOTE = (
+    "\n# 生图工具使用约束\n"
+    "调用 `openai_image` 工具生成或编辑图片时，该轮不要输出任何文字："
+    "不要说「正在生成」「稍等」「马上好」之类的话，图片会在生成完成后自动发到会话。"
+    "不要声称图片已经生成完毕；用户没有主动询问进度时，也不要调用 `action=status` 或汇报进度。"
+)
 
 # 指令参数：长名 / 中文别名 -> 服务层字段名。
 _OPTION_ALIASES = {
@@ -164,8 +177,32 @@ class OpenAIImagePlugin(Star):
         super().__init__(context)
         self.config = config
         self.service = ImageService(config)
+        # LLM 工具把生图放到插件自己的后台任务里执行，任务记录同时供
+        # action=status 查询；star_context 用于在后台直接把图片发到会话。
+        self.tasks = ImageTaskRegistry()
         if config.get("llm_tool_enabled", True):
-            self.context.add_llm_tools(OpenAIImageTool(service=self.service))
+            self.context.add_llm_tools(
+                OpenAIImageTool(
+                    service=self.service,
+                    registry=self.tasks,
+                    star_context=self.context,
+                )
+            )
+
+    @filter.on_llm_request()
+    async def inject_tool_note(self, event: AstrMessageEvent, req: object):
+        """向系统提示补一条生图工具使用约束：调用工具的那一轮不要说话。
+
+        工具是后台任务，提交后本轮直接结束、图片自动发送，模型无需（也不该）
+        再输出「正在生成」之类的提示。取不到 system_prompt 时静默跳过。
+        """
+
+        if not self.config.get("llm_tool_enabled", True):
+            return
+        try:
+            req.system_prompt += _TOOL_SYSTEM_NOTE
+        except Exception as exc:  # noqa: BLE001 - 提示注入失败不应中断请求
+            logger.warning("OpenAI image 工具提示注入失败：%s", type(exc).__name__)
 
     @filter.command("draw", alias={"生图"})
     async def draw(self, event: AstrMessageEvent, args: GreedyStr):
@@ -247,7 +284,11 @@ class OpenAIImagePlugin(Star):
         return event.plain_result(message)
 
     async def terminate(self):
-        """插件卸载时释放 HTTP 客户端；失败不影响卸载。"""
+        """插件卸载时取消后台生图任务并释放 HTTP 客户端；失败不影响卸载。"""
+        try:
+            await self.tasks.shutdown()
+        except Exception as exc:  # noqa: BLE001 - 取消失败不应中断卸载
+            logger.warning("OpenAI image tasks shutdown failed: %s", type(exc).__name__)
         try:
             await self.service.close()
         except Exception as exc:  # noqa: BLE001 - 关闭失败不应中断卸载

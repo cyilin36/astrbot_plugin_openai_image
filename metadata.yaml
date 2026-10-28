@@ -2,7 +2,7 @@ name: astrbot_plugin_openai_image
 display_name: OpenAI 生图
 short_desc: 用 OpenAI Image API 生图与改图，支持 /draw 指令和 LLM 工具调用。
 desc: 对接 OpenAI Image API（/v1/images/generations 与 /v1/images/edits），提供 /draw 指令（别名 /生图）与 openai_image 函数工具，支持文生图、随消息附图的图生图编辑，可配置尺寸、画质、输出格式与并发，结果图片自动发送到当前会话。
-version: 0.1.0-beta3
+version: 0.2.0
 author: cyilin36
 repo: https://github.com/cyilin36/astrbot_plugin_openai_image
 astrbot_version: ">=4.14"

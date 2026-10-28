@@ -77,6 +77,8 @@ HELP_TEXT = """\
 - 别名：/生图（用法相同，例如 /生图 edit 把背景换成海边）
 - LLM 工具调用：模型可自动调用 openai_image 工具完成文生图 / 图生图，
   action=generate 或 action=edit，编辑时图片取自当前消息，无需也无法传图片字节。
+  工具是后台任务：提交后本轮直接结束（不会回复「正在生成」），图片生成完成后
+  自动发到当前会话；需要查进度时让模型用 action=status 查询。
 
 可用参数（写在提示词前面；指令与 LLM 工具都支持）：
   --size / --尺寸       默认 1024x1024；可选 1536x1024、1024x1536、auto，
@@ -407,7 +409,7 @@ class ImageService:
 
     # ------------------------------------------------------------------ 生成
 
-    async def generate(
+    def prepare_generate(
         self,
         event: object,
         prompt: str,
@@ -418,7 +420,9 @@ class ImageService:
         n: int = 0,
         background: str = "",
         output_format: str = "",
-    ) -> tuple[list[str], ImageCallResult]:
+    ) -> tuple[str, ImageOptions]:
+        """权限、冷却与参数校验，返回 ``(uid, 已补全的选项)``；不做网络请求。"""
+
         uid = self.assert_authorized(event)
         self._check_cooldown(uid)
         opts = self.build_options(
@@ -430,6 +434,47 @@ class ImageService:
             background=background,
             output_format=output_format,
         )
+        return uid, opts
+
+    async def prepare_edit(
+        self,
+        event: object,
+        prompt: str,
+        *,
+        model: str = "",
+        size: str = "",
+        quality: str = "",
+        n: int = 0,
+        background: str = "",
+        output_format: str = "",
+    ) -> tuple[str, ImageOptions, list[tuple[str, bytes]]]:
+        """图生图的准备阶段：校验参数并把待编辑图片读进内存。
+
+        图片必须在提交后台任务之前读完：消息里的图片多来自临时文件，事件处理
+        结束后可能被清理。
+        """
+
+        uid = self.assert_authorized(event)
+        self._check_cooldown(uid)
+        images = await self.extract_images(event)
+        if not images:
+            raise ImageValidationError("编辑图片需要随消息附上一张图片")
+        opts = self.build_options(
+            prompt,
+            model=model,
+            size=size,
+            quality=quality,
+            n=n,
+            background=background,
+            output_format=output_format,
+        )
+        return uid, opts, images
+
+    async def run_generate(
+        self, uid: str, opts: ImageOptions
+    ) -> tuple[list[str], ImageCallResult]:
+        """按已校验的选项调用文生图接口并落盘；后台任务直接用这个方法。"""
+
         async with self._semaphore:
             result = await self.client.generate(
                 opts.prompt,
@@ -445,32 +490,14 @@ class ImageService:
         self._remember(opts)
         return paths, result
 
-    async def edit(
+    async def run_edit(
         self,
-        event: object,
-        prompt: str,
-        *,
-        model: str = "",
-        size: str = "",
-        quality: str = "",
-        n: int = 0,
-        background: str = "",
-        output_format: str = "",
+        uid: str,
+        opts: ImageOptions,
+        images: list[tuple[str, bytes]],
     ) -> tuple[list[str], ImageCallResult]:
-        uid = self.assert_authorized(event)
-        self._check_cooldown(uid)
-        images = await self.extract_images(event)
-        if not images:
-            raise ImageValidationError("编辑图片需要随消息附上一张图片")
-        opts = self.build_options(
-            prompt,
-            model=model,
-            size=size,
-            quality=quality,
-            n=n,
-            background=background,
-            output_format=output_format,
-        )
+        """按已校验的选项调用图生图接口并落盘；后台任务直接用这个方法。"""
+
         async with self._semaphore:
             result = await self.client.edit(
                 opts.prompt,
@@ -486,6 +513,54 @@ class ImageService:
             paths = await self._persist(result, uid, output_format=opts.output_format)
         self._remember(opts)
         return paths, result
+
+    async def generate(
+        self,
+        event: object,
+        prompt: str,
+        *,
+        model: str = "",
+        size: str = "",
+        quality: str = "",
+        n: int = 0,
+        background: str = "",
+        output_format: str = "",
+    ) -> tuple[list[str], ImageCallResult]:
+        uid, opts = self.prepare_generate(
+            event,
+            prompt,
+            model=model,
+            size=size,
+            quality=quality,
+            n=n,
+            background=background,
+            output_format=output_format,
+        )
+        return await self.run_generate(uid, opts)
+
+    async def edit(
+        self,
+        event: object,
+        prompt: str,
+        *,
+        model: str = "",
+        size: str = "",
+        quality: str = "",
+        n: int = 0,
+        background: str = "",
+        output_format: str = "",
+    ) -> tuple[list[str], ImageCallResult]:
+        uid, opts, images = await self.prepare_edit(
+            event,
+            prompt,
+            model=model,
+            size=size,
+            quality=quality,
+            n=n,
+            background=background,
+            output_format=output_format,
+        )
+        return await self.run_edit(uid, opts, images)
 
     def _remember(self, opts: ImageOptions) -> None:
         self._last_model = opts.model

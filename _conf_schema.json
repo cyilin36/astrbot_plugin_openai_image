@@ -104,7 +104,7 @@
     "description": "启用 LLM 工具调用",
     "type": "bool",
     "default": true,
-    "hint": "关闭后只保留 /draw 指令，不再向大模型暴露 openai_image 工具。"
+    "hint": "关闭后只保留 /draw 指令，不再向大模型暴露 openai_image 工具。工具在后台生图，提交后不回复「正在生成」，完成时自动把图片发到会话。"
   },
   "save_dir": {
     "description": "图片保存目录",
