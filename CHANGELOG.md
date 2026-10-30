@@ -6,6 +6,10 @@
 
 - 图生图支持引用图片：当前消息没有直接附图时，自动使用被引用消息（`Reply.chain`）里的图片，`/draw edit` 与 LLM 工具都生效；当前消息自带图片时仍优先使用消息内的图片（不合并引用图）。
 
+### 修复
+
+- 修复 `openai_image` 工具在 AstrBot 上调用即崩溃（`TypeError: object async_generator can't be used in 'await' expression`）：`OpenAIImageTool.call()` 改回普通协程。AstrBot 的工具权限代理 `_PermissionGuardedTool.call()` 会直接 `await` 插件工具的 `call()`，async generator 无法被 await；提交类动作改为返回空消息结果，仍保持「本轮静默结束、不回复『正在生成』」。
+
 ## 0.2.0 - 2026-10-28
 
 ### 新增

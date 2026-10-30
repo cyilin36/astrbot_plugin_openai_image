@@ -12,6 +12,10 @@ LLM 通过本工具调用 ImageService 完成文生图 / 图生图：
 文本，因此模型不会再多说一句「正在生成」。图片生成完成后由插件直接发到会话，
 不会唤醒模型；模型只有在用户开口时才通过 ``action=status`` 查询进度。
 
+``call()`` 必须是普通协程（async def + return），不能写成 async generator：
+AstrBot 的工具权限代理 ``_PermissionGuardedTool.call()`` 会直接 ``await`` 插件工具的
+``call()``，await 一个 async generator 会抛 TypeError，导致工具完全不可用。
+
 设计红线：call() 永不向 LLM 抛异常；返回的 JSON 文本绝不包含 api_key。
 """
 
@@ -21,7 +25,6 @@ import asyncio
 import copy
 import json
 import logging
-from collections.abc import AsyncGenerator
 from dataclasses import field as _stdlib_field
 from typing import Any
 
@@ -197,37 +200,37 @@ class OpenAIImageTool(FunctionTool):  # type: ignore[misc]
     parameters: dict = _PARAMETERS_FIELD
     # 刻意不使用 AstrBot 的 is_background_task：那套机制会在后台任务完成后再唤醒
     # 主 agent 收尾，等于让模型多回复一轮。这里由插件自己起后台任务、自己发图。
+    # （另外 AstrBot 的权限代理 _PermissionGuardedTool 不会复制该字段，实际也不会生效。）
     is_background_task: bool = False
 
-    async def call(self, context: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
+    async def call(self, context: Any, **kwargs: Any) -> Any:
         """执行工具调用。
 
-        generate / edit：校验后把生图挂到后台任务，然后结束本回合且不产出任何文本。
+        generate / edit：校验后把生图挂到后台任务，然后返回一个空消息结果，
+        让 AstrBot 结束本回合且不产出任何文本。
         status：返回当前会话的任务列表，供模型回答用户对进度的询问。
 
-        始终以 JSON 文本或空结果产出，不会向调用方抛异常。
+        始终返回 JSON 文本或空结果，不会向调用方抛异常。
+        必须是普通协程：AstrBot 的权限代理会 await 本方法（见模块 docstring）。
         """
 
         action = str(kwargs.get("action") or "").strip().lower()
         if action == "status":
-            yield _dumps(self._status_payload(context, kwargs.get("task_id")))
-            return
+            return _dumps(self._status_payload(context, kwargs.get("task_id")))
         if action not in ("generate", "edit"):
-            yield _dumps(
+            return _dumps(
                 {"success": False, "error": "action 必须是 generate、edit 或 status"}
             )
-            return
 
         event = _event_of(context)
         service = self.service
         if service is None or event is None:
-            yield _dumps(
+            return _dumps(
                 {
                     "success": False,
                     "error": "生图服务尚未初始化，请检查插件是否正常加载",
                 }
             )
-            return
 
         prompt = str(kwargs.get("prompt") or "")
         send_to_user = kwargs.get("send_to_user")
@@ -244,12 +247,10 @@ class OpenAIImageTool(FunctionTool):  # type: ignore[misc]
             else:
                 uid, opts, images = await service.prepare_edit(event, prompt, **params)
         except ImageError as exc:
-            yield _dumps({"success": False, "error": str(exc)})
-            return
+            return _dumps({"success": False, "error": str(exc)})
         except Exception:  # 绝不让异常冒泡给 LLM
             logger.exception("生图工具参数校验失败")
-            yield _dumps({"success": False, "error": _GENERIC_ERROR})
-            return
+            return _dumps({"success": False, "error": _GENERIC_ERROR})
 
         registry = self._task_registry()
         session = _session_of(event)
@@ -269,8 +270,9 @@ class OpenAIImageTool(FunctionTool):  # type: ignore[misc]
                 event=event,
             ),
         )
-        # 生图已排入后台：结束本回合且不产出文本，模型不会再回复「正在生成」。
-        yield _silent_result(event)
+        # 生图已排入后台：返回空消息结果，AstrBot 会结束本回合且不发任何文本，
+        # 模型不会再回复「正在生成」。
+        return _silent_result(event)
 
     # ------------------------------------------------------------------ 后台执行
 
