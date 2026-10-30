@@ -3,7 +3,7 @@
 只暴露一条顶层指令 ``/draw``（别名 ``/生图``），子能力由内部手动路由：
 
 - ``/draw [参数] <提示词>``   文生图
-- ``/draw edit [参数] <提示词>``  图生图（图片随同一条消息发出）
+- ``/draw edit [参数] <提示词>``  图生图（图片随同一条消息发出，或引用一张图片）
 - ``/draw help``             使用说明
 
 参数（``--size`` / ``--quality`` / ``--n`` / ``--background`` / ``--format`` /
@@ -51,7 +51,9 @@ except ImportError:  # AstrBot 安装方式可能直接加载 main.py
 _HELP_TOKENS = {"help", "帮助", "-h", "--help"}
 # 图生图关键词；出现在首个 token 时才进入编辑分支。
 _EDIT_TOKENS = {"edit", "改图"}
-_EDIT_USAGE = "用法：/draw edit [参数] <提示词>，并随消息附上一张图片。"
+_EDIT_USAGE = (
+    "用法：/draw edit [参数] <提示词>，并随消息附上一张图片（也可以引用一张图片）。"
+)
 # 非预期异常统一文案：绝不回显异常内容，避免泄露 api_key / 内部细节。
 _UNEXPECTED_ERROR = "生图失败，请检查 AstrBot 日志与插件配置。"
 
@@ -206,7 +208,7 @@ class OpenAIImagePlugin(Star):
 
     @filter.command("draw", alias={"生图"})
     async def draw(self, event: AstrMessageEvent, args: GreedyStr):
-        """OpenAI 生图：/draw [参数] <提示词>，或 /draw edit [参数] <提示词>（随消息附图），或 /draw help。"""
+        """OpenAI 生图：/draw [参数] <提示词>，或 /draw edit [参数] <提示词>（随消息附图或引用图片），或 /draw help。"""
         text = str(args).strip()
         if not text or text.lower() in _HELP_TOKENS:
             yield event.plain_result(self.service.format_help())

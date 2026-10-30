@@ -72,11 +72,12 @@ _DATA_URI_RE = re.compile(r"^data:[^;,]*;base64,", re.IGNORECASE)
 HELP_TEXT = """\
 生图插件使用说明：
 - /draw <提示词>      文生图，例如：/draw 一只戴墨镜的橘猫
-- /draw edit <提示词> 图生图编辑：把图片随消息一起发出，再附带提示词
+- /draw edit <提示词> 图生图编辑：把图片随消息一起发出，或引用一张图片，再附带提示词
 - /draw help          查看本说明
 - 别名：/生图（用法相同，例如 /生图 edit 把背景换成海边）
 - LLM 工具调用：模型可自动调用 openai_image 工具完成文生图 / 图生图，
-  action=generate 或 action=edit，编辑时图片取自当前消息，无需也无法传图片字节。
+  action=generate 或 action=edit，编辑时图片取自当前消息（没有则取引用消息），
+  无需也无法传图片字节。
   工具是后台任务：提交后本轮直接结束（不会回复「正在生成」），图片生成完成后
   自动发到当前会话；需要查进度时让模型用 action=status 查询。
 
@@ -458,7 +459,9 @@ class ImageService:
         self._check_cooldown(uid)
         images = await self.extract_images(event)
         if not images:
-            raise ImageValidationError("编辑图片需要随消息附上一张图片")
+            raise ImageValidationError(
+                "编辑图片需要随消息附上一张图片，或引用一张图片后再发送指令"
+            )
         opts = self.build_options(
             prompt,
             model=model,
@@ -570,15 +573,41 @@ class ImageService:
     # ------------------------------------------------------------------ 图片输入
 
     async def extract_images(self, event: object) -> list[tuple[str, bytes]]:
-        """从当前消息中提取图片，返回 [(filename, bytes)]；无图返回空列表。"""
+        """从当前消息或引用消息中提取图片，返回 [(filename, bytes)]；无图返回空列表。
 
-        collected: list[tuple[str, bytes]] = []
+        优先使用随消息直接附带的图片；当前消息没有附图时，回退到被引用消息
+        （``Reply.chain``）里的图片，因此「引用一张图 + 说明要改成什么」也能图生图。
+        """
+
         try:
             messages: Sequence[Any] = list(event.get_messages() or [])
         except Exception as exc:  # 事件对象形态不定，不向上抛栈
             raise ImageValidationError(f"读取消息内容失败：{exc}") from exc
 
+        collected = await self._collect_images(messages)
+        if collected:
+            return collected
+
+        # 没有直接附图时，回退到引用消息链里的图片（AstrBot 会把被引用消息的
+        # 完整消息链放进 Reply.chain；引用里再套引用时 chain 不会继续展开）。
         for comp in messages:
+            if getattr(type(comp), "__name__", "") != "Reply":
+                continue
+            chain = getattr(comp, "chain", None)
+            if not chain:
+                continue
+            collected = await self._collect_images(chain)
+            if collected:
+                return collected
+        return []
+
+    async def _collect_images(
+        self, components: Sequence[Any]
+    ) -> list[tuple[str, bytes]]:
+        """从一组消息组件里读取图片；单个组件失败只跳过它，不影响其它图片。"""
+
+        collected: list[tuple[str, bytes]] = []
+        for comp in components or []:
             if getattr(type(comp), "__name__", "") != "Image":
                 continue
             converter = getattr(comp, "convert_to_file_path", None)
